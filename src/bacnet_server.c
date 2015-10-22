@@ -123,21 +123,19 @@ static void *modbus(void *arg){
 	if (modbus_connect(ctx) == -1) {
 	    	fprintf(stderr, "Connection failed: %s\n", modbus_strerror(errno));
 	        modbus_free(ctx);  //release connection
-		return -1;    //leave function in error state
-	}
+		}
 	while(1){
 		rc = modbus_read_registers(ctx, 12, 1, tab_reg);
 
 		if(rc == -1) {
 			fprintf(stderr, "%s\n", modbus_strerror(errno));
-			return -1;
 		}
 
 		for (i=0; i < rc; i++) {
 			sprintf(dump, "%x", tab_reg[i]);
 			add_to_list(&list_heads[i], dump);
 		}
-		sleep(1);
+		usleep(100000);
 	}
 	sleep(1);		//call every 1 second
 	modbus_close(ctx);
@@ -171,7 +169,7 @@ static int Update_Analog_Input_Read_Property(
 
     pthread_mutex_lock(&list_lock);
 
-    if (list_heads == NULL) {
+    if (list_heads[instance_no] == NULL) {
 	pthread_mutex_unlock(&list_lock);
 	goto not_pv;
     }	
