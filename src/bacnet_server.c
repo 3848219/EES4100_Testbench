@@ -1,4 +1,14 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <getopt.h>
+#include <pthread.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <errno.h>
+#include <unistd.h>
+#include <modbus.h>
 
 #include <libbacnet/address.h>
 #include <libbacnet/device.h>
@@ -10,6 +20,13 @@
 #include <libbacnet/tsm.h>
 #include <libbacnet/ai.h>
 #include "bacnet_namespace.h"
+
+#define SERVER_ADDR "127.0.0.1"
+#define SERVER_PORT 10000
+#define DATA_LENGTH 256
+#define NUM_LISTS   2
+#define LISTEN_BACKLOG 1
+#define QUIT_STRING "exit"
 
 #define BACNET_INSTANCE_NO	    12
 #define BACNET_PORT		    0xBAC1
@@ -34,7 +51,112 @@ static uint16_t test_data[] = {
     0xA4EC, 0x6E39, 0x8740, 0x1065, 0x9134, 0xFC8C };
 #define NUM_TEST_DATA (sizeof(test_data)/sizeof(test_data[0]))
 
+/* Linked list object */
+typedef struct s_word_object word_object;
+struct s_word_object {
+    char *word;
+        word_object *next;
+	};
+
+
+/* list_head: Shared between two threads, must be accessed with list_lock */
+static word_object *list_heads[NUM_LISTS];
+static pthread_mutex_t list_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t list_data_ready = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t list_data_flush = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t timer_lock = PTHREAD_MUTEX_INITIALIZER;
+
+
+/*list get first */
+static word_object *list_get_first(word_object **list_heads){
+	word_object *first_object;
+	first_object=*list_heads;
+	*list_heads=(*list_heads)-> next;
+	return first_object;
+}
+
+/* Add object to list */
+static void add_to_list(word_object **list_head, char *word) {
+    word_object *last_object, *tmp_object;
+    char *tmp_string;
+
+    /* Do all memory allocation outside of locking - strdup() and malloc() can
+     * block */
+    tmp_object = malloc(sizeof(word_object));
+    tmp_string = strdup(word);
+
+    /* Set up tmp_object outside of locking */
+    tmp_object->word = tmp_string;
+    tmp_object->next = NULL;
+    
+    pthread_mutex_lock(&list_lock);
+
+    if (*list_head == NULL) {
+	/* The list is empty, just place our tmp_object at the head */
+	*list_head = tmp_object;
+    } else {
+	/* Iterate through the linked list to find the last object */
+	last_object = *list_head;
+	while (last_object->next) {
+	    last_object = last_object->next;
+	}
+	/* Last object is now found, link in our tmp_object at the tail */
+	last_object->next = tmp_object;
+        last_object = last_object->next;
+    }
+
+    pthread_mutex_unlock(&list_lock);
+    pthread_cond_signal(&list_data_ready);
+}
+
+/*MODBUS CONNECTION*/
+static void *modbus(void *arg){
+	modbus_t *ctx;
+	uint16_t tab_reg[64];
+	char dump[32];
+	int rc;
+	int i;
+
+	//ctx = modbus_new_tcp("140.159.153.159", 502);
+	ctx = modbus_new_tcp("127.0.0.1", 502);
+
+	if (modbus_connect(ctx) == -1) {
+	    	fprintf(stderr, "Connection failed: %s\n", modbus_strerror(errno));
+	        modbus_free(ctx);  //release connection
+		return -1;    //leave function in error state
+	}
+	while(1){
+		rc = modbus_read_registers(ctx, 12, 1, tab_reg);
+
+		if(rc == -1) {
+			fprintf(stderr, "%s\n", modbus_strerror(errno));
+			return -1;
+		}
+
+		for (i=0; i < rc; i++) {
+			sprintf(dump, "%x", tab_reg[i]);
+			add_to_list(&list_heads[i], dump);
+		}
+		sleep(1);
+	}
+	sleep(1);		//call every 1 second
+	modbus_close(ctx);
+	modbus_free(ctx);
+	return arg;  		//hide warning messages
+	}
+
+
+
+static void list_flush(word_object *list_head) {
+    pthread_mutex_lock(&list_lock);
+
+    while (list_head != NULL) {
+	pthread_cond_signal(&list_data_ready);
+	pthread_cond_wait(&list_data_flush, &list_lock);
+    }
+
+    pthread_mutex_unlock(&list_lock);
+}
 
 static int Update_Analog_Input_Read_Property(
 		BACNET_READ_PROPERTY_DATA *rpdata) {
@@ -188,7 +310,7 @@ int main(int argc, char **argv) {
     uint8_t rx_buf[bacnet_MAX_MPDU];
     uint16_t pdu_len;
     BACNET_ADDRESS src;
-    pthread_t minute_tick_id, second_tick_id;
+    pthread_t minute_tick_id, second_tick_id, modbus_id;
 
     bacnet_Device_Set_Object_Instance_Number(BACNET_INSTANCE_NO);
     bacnet_address_init();
@@ -211,7 +333,7 @@ int main(int argc, char **argv) {
 
     pthread_create(&minute_tick_id, 0, minute_tick, NULL);
     pthread_create(&second_tick_id, 0, second_tick, NULL);
-    
+    pthread_create(&modbus_id, 0, modbus, NULL);  
     /* Start another thread here to retrieve your allocated registers from the
      * modbus server. This thread should have the following structure (in a
      * separate function):
