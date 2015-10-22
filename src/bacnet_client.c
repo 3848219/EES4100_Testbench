@@ -339,12 +339,12 @@ static void read_property_ack(
 			data.application_data,
 			data.application_data_len,
 			&value);
-	data_16 = value.type.Real;
+//	data_16 = value.type.Real;
 
 	array_tail(data_16, instance);
 #if debug
-	fprintf(stderr, "%04X from server %i, instance %i\n", data_16,
-	    device->device_id, instance->instance_no);
+//	fprintf(stderr, "%04X from server %i, instance %i\n", data_16,
+//	    device->device_id, instance->instance_no);
 #endif
     }
 }
