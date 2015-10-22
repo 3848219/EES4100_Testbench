@@ -71,42 +71,42 @@ static pthread_mutex_t timer_lock = PTHREAD_MUTEX_INITIALIZER;
 static word_object *list_get_first(word_object **list_heads){
 	word_object *first_object;
 	first_object=*list_heads;
-	*list_heads=(*list_heads)-> next;
+	*list_heads=(*list_heads)-> next; //update which box is first
 	return first_object;
 }
 
 /* Add object to list */
 static void add_to_list(word_object **list_head, char *word) {
-    word_object *last_object, *tmp_object;
+    word_object *last_object, *tmp_object; //allocating space
     char *tmp_string;
 
     /* Do all memory allocation outside of locking - strdup() and malloc() can
      * block */
-    tmp_object = malloc(sizeof(word_object));
-    tmp_string = strdup(word);
+    tmp_object = malloc(sizeof(word_object)); //allocate memory to store wordobject
+    tmp_string = strdup(word); //duplicate sting and store
 
     /* Set up tmp_object outside of locking */
-    tmp_object->word = tmp_string;
-    tmp_object->next = NULL;
+    tmp_object->word = tmp_string; // word part of tempobject stores in tempstring
+    tmp_object->next = NULL;       //lets program know next box doesnt exist 
     
-    pthread_mutex_lock(&list_lock);
+    pthread_mutex_lock(&list_lock); //lock current list so other threads cant access
 
-    if (*list_head == NULL) {
+    if (*list_head == NULL) {      
 	/* The list is empty, just place our tmp_object at the head */
 	*list_head = tmp_object;
     } else {
 	/* Iterate through the linked list to find the last object */
 	last_object = *list_head;
-	while (last_object->next) {
-	    last_object = last_object->next;
+	while (last_object->next) {  //as long as theres a next box keep iterating
+	    last_object = last_object->next; //go to next box in line
 	}
 	/* Last object is now found, link in our tmp_object at the tail */
-	last_object->next = tmp_object;
-        last_object = last_object->next;
+	last_object->next = tmp_object;  //last object now temp object
+        last_object = last_object->next; //go to last object
     }
 
-    pthread_mutex_unlock(&list_lock);
-    pthread_cond_signal(&list_data_ready);
+    pthread_mutex_unlock(&list_lock); //unlock list so it can be updated
+    pthread_cond_signal(&list_data_ready); //list ready to use
 }
 
 /*MODBUS CONNECTION*/
@@ -137,9 +137,9 @@ static void *modbus(void *arg){
 		}
 		usleep(100000);
 	}
-	sleep(1);		//call every 1 second
-	modbus_close(ctx);
-	modbus_free(ctx);
+//	sleep(1);		//call every 1 second
+//	modbus_close(ctx);
+//	modbus_free(ctx);
 	return arg;  		//hide warning messages
 	}
 
@@ -156,28 +156,28 @@ static void list_flush(word_object *list_head) {
     pthread_mutex_unlock(&list_lock);
 }
 
-static int Update_Analog_Input_Read_Property(
+static int Update_Analog_Input_Read_Property(  //
 		BACNET_READ_PROPERTY_DATA *rpdata) {
-	word_object *current_package;
-	uint16_t stack[3];
+	word_object *current_package; //dummy variable
+	uint16_t stack[3]; //second dummy variable 
 
     static int index;
-    int instance_no = bacnet_Analog_Input_Instance_To_Index(
+    int instance_no = bacnet_Analog_Input_Instance_To_Index( //has a request been recieved, store in instance number
 			rpdata->object_instance);
 
-    if (rpdata->object_property != bacnet_PROP_PRESENT_VALUE) goto not_pv;
+    if (rpdata->object_property != bacnet_PROP_PRESENT_VALUE) goto not_pv; //if request invalid bail out
 
-    pthread_mutex_lock(&list_lock);
+    pthread_mutex_lock(&list_lock); // lock list 
 
-    if (list_heads[instance_no] == NULL) {
-	pthread_mutex_unlock(&list_lock);
-	goto not_pv;
+    if (list_heads[instance_no] == NULL) { //if no objects in list bail out
+	pthread_mutex_unlock(&list_lock); // unlock list
+	goto not_pv;  //bail out, go to end of function
     }	
 
-    current_package = list_get_first(&list_heads[instance_no]);
-    stack[instance_no] = strtol(current_package->word, NULL, 16);
-    free(current_package);
-    pthread_mutex_unlock(&list_lock);
+    current_package = list_get_first(&list_heads[instance_no]);  //update current package with data from first of list
+    stack[instance_no] = strtol(current_package->word, NULL, 16); // convert string to long int.
+    free(current_package);  // release memory saved for current package
+    pthread_mutex_unlock(&list_lock); // unlock list
 
 
     printf("AI_Present_Value request for instance %i\n", instance_no);
@@ -190,13 +190,13 @@ static int Update_Analog_Input_Read_Property(
      *     Second argument: data to be sent
      *
      * Without reconfiguring libbacnet, a maximum of 4 values may be sent */
-    bacnet_Analog_Input_Present_Value_Set(0, stack[instance_no]);
+    bacnet_Analog_Input_Present_Value_Set(0, stack[instance_no]);  //send data to bacnet clinet
     /* bacnet_Analog_Input_Present_Value_Set(1, test_data[index++]); */
     /* bacnet_Analog_Input_Present_Value_Set(2, test_data[index++]); */
     
     if (index == NUM_TEST_DATA) index = 0;
 
-not_pv:
+not_pv: //bail out point
     return bacnet_Analog_Input_Read_Property(rpdata);
 }
 
