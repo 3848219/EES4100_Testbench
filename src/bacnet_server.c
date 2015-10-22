@@ -160,12 +160,27 @@ static void list_flush(word_object *list_head) {
 
 static int Update_Analog_Input_Read_Property(
 		BACNET_READ_PROPERTY_DATA *rpdata) {
+	word_object *current_package;
+	uint16_t stack[3];
 
     static int index;
     int instance_no = bacnet_Analog_Input_Instance_To_Index(
 			rpdata->object_instance);
 
     if (rpdata->object_property != bacnet_PROP_PRESENT_VALUE) goto not_pv;
+
+    pthread_mutex_lock(&list_lock);
+
+    if (list_heads == NULL) {
+	pthread_mutex_unlock(&list_lock);
+	goto not_pv;
+    }	
+
+    current_package = list_get_first(&list_heads[instance_no]);
+    stack[instance_no] = strtol(current_package->word, NULL, 16);
+    free(current_package);
+    pthread_mutex_unlock(&list_lock);
+
 
     printf("AI_Present_Value request for instance %i\n", instance_no);
     /* Update the values to be sent to the BACnet client here.
@@ -177,7 +192,7 @@ static int Update_Analog_Input_Read_Property(
      *     Second argument: data to be sent
      *
      * Without reconfiguring libbacnet, a maximum of 4 values may be sent */
-    bacnet_Analog_Input_Present_Value_Set(0, test_data[index++]);
+    bacnet_Analog_Input_Present_Value_Set(0, stack[instance_no]);
     /* bacnet_Analog_Input_Present_Value_Set(1, test_data[index++]); */
     /* bacnet_Analog_Input_Present_Value_Set(2, test_data[index++]); */
     
